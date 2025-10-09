@@ -1,0 +1,148 @@
+body {
+	margin: 0;
+	background-color: #000;
+	color: #fff;
+	font-family: Monospace;
+	font-size: 13px;
+	line-height: 24px;
+	overscroll-behavior: none;
+}
+
+a {
+	color: #ff0;
+	text-decoration: none;
+}
+
+a:hover {
+	text-decoration: underline;
+}
+
+button {
+	cursor: pointer;
+	text-transform: uppercase;
+}
+/*
+#info {
+	position: absolute;
+	top: 0px;
+	width: 100%;
+	padding: 10px;
+	box-sizing: border-box;
+	text-align: center;
+	-moz-user-select: none;
+	-webkit-user-select: none;
+	-ms-user-select: none;
+	user-select: none;
+	pointer-events: none;
+	z-index: 1;} /* TODO Solve this in HTML */
+
+
+a, button, input, select {
+	pointer-events: auto;
+}
+
+.lil-gui {
+	z-index: 2 !important; /* TODO Solve this in HTML */
+}
+
+@media all and ( max-width: 640px ) {
+	.lil-gui.root { 
+		right: auto;
+		top: auto;
+		max-height: 50%;
+		max-width: 80%;
+		bottom: 0;
+		left: 0;
+	}
+}
+
+#overlay {
+	position: absolute;
+	font-size: 16px;
+	z-index: 2;
+	top: 0;
+	left: 0;
+	width: 100%;
+	height: 100%;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex-direction: column;
+	background: rgba(0,0,0,0.7);
+}
+
+	#overlay button {
+		background: transparent;
+		border: 0;
+		border: 1px solid rgb(255, 255, 255);
+		border-radius: 4px;
+		color: #ffffff;
+		padding: 12px 18px;
+		text-transform: uppercase;
+		cursor: pointer;
+	}
+
+#notSupported {
+	width: 50%;
+	margin: auto;
+	background-color: #f00;
+	margin-top: 20px;
+	padding: 10px;
+}
+#jump-button {  
+        position: absolute;  
+        bottom: 40px;  
+        right: 40px;  
+        width: 80px;  
+        height: 80px;  
+        background: radial-gradient(circle, rgba(255,255,255,0.4) 0%, rgba(255,255,255,0.2) 70%);  
+        border: 2px solid rgba(255,255,255,0.6);  
+        border-radius: 50%;  
+        display: flex;  
+        align-items: center;  
+        justify-content: center;  
+        font-size: 36px;  
+        color: white;  
+        font-weight: bold;  
+        text-shadow: 0 0 5px black;  
+        user-select: none;  
+        touch-action: none;  
+    }  
+    #jump-button:active {  
+        background: radial-gradient(circle, rgba(255,255,255,0.6) 0%, rgba(255,255,255,0.3) 70%);  
+        transform: scale(0.95);  
+    }  
+#joystick-zone {  
+        position: absolute;  
+        bottom: 40px;  
+        left: 40px;  
+        width: 120px;  
+        height: 120px;  
+        background: rgba(255, 255, 255, 0.05); /* optional transparent zone */  
+        border-radius: 50%;  
+        touch-action: none;  
+        user-select: none;  
+    	  
+    }  
+  
+    #joystick-base {  
+        position: absolute;  
+        width: 100%;  
+        height: 100%;  
+        border-radius: 50%;  
+        background: rgba(255, 255, 255, 0.1);  
+        border: 2px solid rgba(255, 255, 255, 0.3);  
+    }  
+  
+    #joystick-stick {  
+        position: absolute;  
+        width: 50px;  
+        height: 50px;  
+        left: 35px;  
+        top: 35px;  
+        border-radius: 50%;  
+        background: rgba(255, 255, 255, 0.4);  
+        border: 2px solid rgba(255, 255, 255, 0.6);  
+        pointer-events: none;  
+        transition: left 0.05s, top 0.05s;  
+    }  
