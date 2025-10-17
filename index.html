@@ -1,0 +1,682 @@
+<!DOCTYPE html>    <html lang="en">        <head>              
+    <title> threejs folder three.js - misc - octree collisions</title>              
+    <meta charset="utf-8" />              
+    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">              
+    <link type="text/css" rel="stylesheet" href="main.css">              
+    <style>            
+      /* tiny QoL: make buttons above canvas and unselectable */            
+      #jump-button { position: fixed; right: 16px; bottom: 16px; font-size: 28px; line-height: 48px; width: 48px; height: 48px; text-align:center; border-radius: 50%; background:#1118; color:#fff; user-select:none; }            
+      #joystick-zone { position: fixed; left: 10px; bottom: 10px; width: 120px; height: 120px; border-radius: 50%; touch-action: none; }            
+      #joystick-base { position:absolute; left:0; top:0; width:120px; height:120px; border-radius:50%; outline:2px solid #fff8; }            
+      #joystick-stick{ position:absolute; width:50px; height:50px; left:35px; top:35px; border-radius:50%; background:#fff8; }            
+      canvas { touch-action: none; }            
+    </style>            
+  </head>              
+  <body>              
+    <div id="container"></div>              
+    <div id="jump-button">⤒</div>              
+    <div id="joystick-zone">              
+      <div id="joystick-base"></div>              
+      <div id="joystick-stick"></div>              
+    </div>    <!-- Importmap using official CDN -->            
+<script type="importmap">            
+  {            
+    "imports": {            
+      "three": "https://unpkg.com/three@0.164.1/build/three.module.js",            
+      "three/addons/": "https://unpkg.com/three@0.164.1/examples/jsm/"            
+    }            
+  }            
+</script>    <script type="module">              
+  import * as THREE from 'three';              
+  import Stats from 'three/addons/libs/stats.module.js';              
+  import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';              
+  import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';   
+  import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+  import { Octree } from 'three/addons/math/Octree.js';              
+  import { OctreeHelper } from 'three/addons/helpers/OctreeHelper.js';              
+  import { Capsule } from 'three/addons/math/Capsule.js';              
+          
+              
+  // ---------- Scene / Camera / Lights ----------            
+  const clock = new THREE.Clock();              
+  const scene = new THREE.Scene();              
+  scene.background = new THREE.Color(0x87ceeb); // light blue sky color
+scene.fog = new THREE.Fog(0x87ceeb, 60, 400); // soft distant fog
+      const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1000);              
+  camera.rotation.order = 'YXZ';  // yaw then pitch for FPS            
+          
+      
+      // ---------- Load blue sky HDR ----------
+const rgbeLoader = new RGBELoader();
+rgbeLoader.load('./skybox/skybox.hdr', (hdrTexture) => {
+  hdrTexture.mapping = THREE.EquirectangularReflectionMapping;
+  scene.background = hdrTexture;       // show HDR sky
+  scene.environment = hdrTexture;      // use for reflections
+});
+      
+      
+// ======== DAYTIME LIGHTING SETUP ========
+
+// Sky color + fog (bright clear blue)
+scene.background = new THREE.Color(0x87ceeb); // sky blue
+scene.fog = new THREE.Fog(0x87ceeb, 60, 400); // distant soft fog
+
+// Hemisphere light for ambient brightness (sky + ground tint)
+const hemiLight = new THREE.HemisphereLight(0xbcdfff, 0x7a6c5a, 1.0);
+// sky color (light blue), ground color (brownish ground reflection)
+scene.add(hemiLight);
+
+// Directional sunlight (main sun source)
+const directionalLight = new THREE.DirectionalLight(0xffffff, 1.5);
+directionalLight.position.set(-30, 50, -10);
+directionalLight.castShadow = true;
+
+// Shadow settings
+directionalLight.shadow.camera.near = 0.01;
+directionalLight.shadow.camera.far = 200;
+directionalLight.shadow.camera.right = 50;
+directionalLight.shadow.camera.left = -50;
+directionalLight.shadow.camera.top = 50;
+directionalLight.shadow.camera.bottom = -50;
+directionalLight.shadow.mapSize.width = 2048;
+directionalLight.shadow.mapSize.height = 2048;
+directionalLight.shadow.radius = 2;
+directionalLight.shadow.bias = -0.0001;
+
+scene.add(directionalLight);
+
+// Fill light to soften shadows and add ambient reflection
+const fillLight = new THREE.HemisphereLight(0xcadfff, 0x9e8b6d, 0.6);
+fillLight.position.set(2, 1, 1);
+scene.add(fillLight);
+
+// Warm sunlight glow (adds warmth around player area)
+const sunLight = new THREE.PointLight(0xfff2cc, 3, 200);
+sunLight.position.set(0, 10, 0);
+sunLight.castShadow = false;
+scene.add(sunLight);
+      
+      
+               
+          
+// Add a glowing sphere to represent the sun visually          
+const sunGeometry = new THREE.SphereGeometry(0.3, 32, 32);          
+const sunMaterial = new THREE.MeshBasicMaterial({ color: 0xffffcc, emissive: 0xffff99 });          
+const sunSphere = new THREE.Mesh(sunGeometry, sunMaterial);          
+sunSphere.position.copy(sunLight.position);          
+scene.add(sunSphere);          
+          
+const container = document.getElementById('container');              
+  const renderer = new THREE.WebGLRenderer({ antialias: true });              
+  renderer.setPixelRatio(window.devicePixelRatio);              
+  renderer.setSize(window.innerWidth, window.innerHeight);              
+  renderer.setAnimationLoop(animate);              
+  renderer.shadowMap.enabled = true;              
+  renderer.shadowMap.type = THREE.VSMShadowMap;              
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;              
+  container.appendChild(renderer.domElement);             
+          
+  const stats = new Stats();              
+  stats.domElement.style.position = 'absolute';              
+  stats.domElement.style.top = '0px';              
+  container.appendChild(stats.domElement);            
+          
+  // ---------- Physics / Player ----------            
+  const GRAVITY = 30;              
+  const NUM_SPHERES = 100;              
+  const SPHERE_RADIUS = 0.2;              
+  const STEPS_PER_FRAME = 5;              
+          
+  const sphereGeometry = new THREE.IcosahedronGeometry(SPHERE_RADIUS, 5);              
+  const sphereMaterial = new THREE.MeshLambertMaterial({ color: 0xdede8d });              
+  const spheres = [];              
+  let sphereIdx = 0;              
+  for (let i = 0; i < NUM_SPHERES; i++) {              
+    const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);              
+    sphere.castShadow = true;              
+    sphere.receiveShadow = true;              
+    scene.add(sphere);              
+    spheres.push({            
+      mesh: sphere,            
+      collider: new THREE.Sphere(new THREE.Vector3(0, -100, 0), SPHERE_RADIUS),            
+      velocity: new THREE.Vector3()            
+    });            
+  }            
+          
+  const worldOctree = new Octree();              
+  const playerCollider = new Capsule(new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1.65, 0), 0.35);           
+            
+    /*  import { enableThirdPersonDebug } from './tp.js';      
+      
+// Activate the debug system      
+enableThirdPersonDebug(scene, camera, playerCollider, renderer);      
+            */
+            
+  const playerVelocity = new THREE.Vector3();              
+  const playerDirection = new THREE.Vector3();              
+  let playerOnFloor = false;              
+  let mouseTime = 0;              
+  const keyStates = {};              
+  const vector1 = new THREE.Vector3();              
+  const vector2 = new THREE.Vector3();              
+  const vector3 = new THREE.Vector3();              
+          
+  // ---------- INPUT ----------            
+  document.addEventListener('keydown', (e) => { keyStates[e.code] = true; });              
+  document.addEventListener('keyup',   (e) => { keyStates[e.code] = false; });            
+          
+  container.addEventListener('mousedown', () => {            
+    document.body.requestPointerLock();            
+    mouseTime = performance.now();            
+  });              
+  document.addEventListener('mouseup', () => {            
+    if (document.pointerLockElement !== null) throwBall();            
+  });            
+          
+  document.body.addEventListener('mousemove', (event) => {            
+    if (document.pointerLockElement === document.body) {            
+      camera.rotation.y -= event.movementX / 500;            
+      camera.rotation.x -= event.movementY / 500;            
+      camera.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, camera.rotation.x));            
+    }            
+  });            
+          
+  // ---------- Touch look (right half) ----------            
+  const joystickZone = document.getElementById('joystick-zone');              
+  const joystickStick = document.getElementById('joystick-stick');              
+  let joystickTouchId = null;              
+  let joystickDX = 0;              
+  let joystickDY = 0;              
+  const joystickCenter = { x: 60, y: 60 }; // 120px zone              
+  let lookTouchId = null;              
+  let lookTouchX, lookTouchY;              
+          
+  document.body.addEventListener('touchstart', (event) => {              
+    for (const touch of event.changedTouches) {              
+      if (touch.clientX > window.innerWidth / 2 && lookTouchId === null && touch.identifier !== joystickTouchId) {            
+        lookTouchId = touch.identifier;            
+        lookTouchX = touch.clientX;            
+        lookTouchY = touch.clientY;            
+      }            
+    }            
+  }, { passive: true });            
+          
+  document.body.addEventListener('touchmove', (event) => {              
+    for (const touch of event.changedTouches) {              
+      if (touch.identifier === lookTouchId && touch.identifier !== joystickTouchId) {              
+        const deltaX = touch.clientX - lookTouchX;              
+        const deltaY = touch.clientY - lookTouchY;              
+        const lookSensitivity = 200;              
+        camera.rotation.y -= deltaX / lookSensitivity;              
+        camera.rotation.x -= deltaY / lookSensitivity;              
+        camera.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, camera.rotation.x));              
+        lookTouchX = touch.clientX;              
+        lookTouchY = touch.clientY;              
+        event.preventDefault();              
+      }              
+    }              
+  }, { passive: false });            
+          
+  document.body.addEventListener('touchend', (event) => {              
+    for (const touch of event.changedTouches) {              
+      if (touch.identifier === lookTouchId) lookTouchId = null;              
+    }              
+  }, { passive: true });            
+          
+  // ---------- Joystick (left circle) ----------            
+  let zoneRect = null;              
+  function updateZoneRect() { zoneRect = joystickZone.getBoundingClientRect(); }              
+  updateZoneRect();              
+  window.addEventListener('resize', updateZoneRect);            
+          
+  joystickZone.addEventListener('touchstart', (e) => {              
+    for (const touch of e.changedTouches) {              
+      if (joystickTouchId === null) {              
+        const x = touch.clientX - (zoneRect.left + joystickCenter.x);              
+        const y = touch.clientY - (zoneRect.top + joystickCenter.y);              
+        if (x * x + y * y <= 60 * 60) {              
+          joystickTouchId = touch.identifier;                
+          joystickStick.style.left = (joystickCenter.x - 25) + 'px';              
+          joystickStick.style.top  = (joystickCenter.y - 25) + 'px';              
+          e.preventDefault();              
+        }              
+      }              
+    }              
+  }, { passive: false });            
+          
+  joystickZone.addEventListener('touchmove', (e) => {              
+    for (const touch of e.changedTouches) {              
+      if (touch.identifier === joystickTouchId) {              
+        const dx = touch.clientX - (zoneRect.left + joystickCenter.x);              
+        const dy = touch.clientY - (zoneRect.top + joystickCenter.y);              
+        const maxR = 40;              
+        const dist = Math.min(Math.hypot(dx, dy), maxR);              
+        const angle = Math.atan2(dy, dx);              
+        joystickDX = Math.cos(angle) * (dist / maxR);              
+        joystickDY = Math.sin(angle) * (dist / maxR);              
+        joystickStick.style.left = (joystickCenter.x + joystickDX * maxR - 25) + 'px';              
+        joystickStick.style.top  = (joystickCenter.y + joystickDY * maxR - 25) + 'px';              
+        e.preventDefault();            
+      }              
+    }              
+  }, { passive: false });            
+          
+  joystickZone.addEventListener('touchend', (e) => {              
+    for (const touch of e.changedTouches) {              
+      if (touch.identifier === joystickTouchId) {              
+        joystickTouchId = null;              
+        joystickDX = 0;              
+        joystickDY = 0;              
+        joystickStick.style.left = (joystickCenter.x - 25) + 'px';              
+        joystickStick.style.top  = (joystickCenter.y - 25) + 'px';              
+        e.preventDefault();              
+      }              
+    }              
+  }, { passive: false });            
+          
+  function joystickControls(deltaTime) {              
+    if (joystickDX !== 0 || joystickDY !== 0) {              
+      const speedDelta = deltaTime * (playerOnFloor ? 100 : 1);              
+      playerVelocity.add(getForwardVector().multiplyScalar(-joystickDY * speedDelta));              
+      playerVelocity.add(getSideVector().multiplyScalar(joystickDX * speedDelta));              
+    }              
+  }            
+          
+  // ---------- Jump button ----------            
+  const jumpButton = document.getElementById("jump-button");              
+  jumpButton.addEventListener("touchstart", (e) => {              
+    e.preventDefault();              
+    if (playerOnFloor) playerVelocity.y = 15;              
+  }, { passive: false });            
+          
+  // ---------- Resize ----------            
+  window.addEventListener('resize', onWindowResize);              
+  function onWindowResize() {              
+    camera.aspect = window.innerWidth / window.innerHeight;              
+    camera.updateProjectionMatrix();              
+    renderer.setSize(window.innerWidth, window.innerHeight);              
+  }            
+          
+  // ---------- Throw spheres ----------            
+  function throwBall() {              
+    const sphere = spheres[sphereIdx];              
+    camera.getWorldDirection(playerDirection);              
+    sphere.collider.center.copy(playerCollider.end).addScaledVector(playerDirection, playerCollider.radius * 1.5);              
+    const impulse = 15 + 30 * (1 - Math.exp((mouseTime - performance.now()) * 0.001));              
+    sphere.velocity.copy(playerDirection).multiplyScalar(impulse);              
+    sphere.velocity.addScaledVector(playerVelocity, 2);              
+    sphereIdx = (sphereIdx + 1) % spheres.length;              
+  }            
+          
+  // ---------- Collision helpers ----------            
+  function playerCollisions() {              
+    const result = worldOctree.capsuleIntersect(playerCollider);              
+    playerOnFloor = false;              
+    if (result) {              
+      playerOnFloor = result.normal.y > 0;              
+      if (!playerOnFloor) playerVelocity.addScaledVector(result.normal, - result.normal.dot(playerVelocity));              
+      if (result.depth >= 1e-10) playerCollider.translate(result.normal.multiplyScalar(result.depth));              
+    }            
+  }            
+          
+  function updatePlayer(deltaTime) {              
+    let damping = Math.exp(-20 * deltaTime) - 1;              
+    if (!playerOnFloor) {              
+      playerVelocity.y -= GRAVITY * deltaTime;              
+      damping *= 0.1;              
+    }              
+    playerVelocity.addScaledVector(playerVelocity, damping);              
+    const deltaPosition = playerVelocity.clone().multiplyScalar(deltaTime);              
+    playerCollider.translate(deltaPosition);              
+    playerCollisions();            
+      //fps Past start    
+    // === Camera follow (with tiny forward offset to avoid head clipping) ===            
+   const CAMERA_NOSE_OFFSET = 0.08; // forward  
+const CAMERA_UP_OFFSET   = 0.09; // lift head up ~5 cm  
+const CAMERA_LEFT_OFFSET = -0.03; // negative = left, positive = right  
+  
+// forward offset (nose)  
+const forward = getForwardVector().clone().normalize().multiplyScalar(CAMERA_NOSE_OFFSET);  
+  
+// left offset (use side vector)  
+const side = getSideVector().clone().normalize().multiplyScalar(CAMERA_LEFT_OFFSET);  
+  
+// up offset  
+const up = new THREE.Vector3(0, CAMERA_UP_OFFSET, 0);  
+  
+// apply all together  
+camera.position.copy(playerCollider.end)  
+  .add(forward)  
+  .add(side)  
+  .add(up);           
+       }   //fps past end         
+      /*  
+      //tps first strat    
+          
+          
+      // === Third-person camera follow ===    
+const CAMERA_BACK_OFFSET = 3.5;   // distance behind player    
+const CAMERA_UP_OFFSET   = 0.5;   // height above player    
+    
+const forward = getForwardVector().clone().normalize();    
+const cameraPos = playerCollider.end.clone();    
+    
+// raise camera up    
+cameraPos.y += CAMERA_UP_OFFSET;    
+    
+// move camera back    
+cameraPos.addScaledVector(forward, -CAMERA_BACK_OFFSET);    
+    
+// apply position    
+camera.position.copy(cameraPos);    
+    
+// look at player    
+camera.lookAt(playerCollider.end.clone().setY(playerCollider.end.y + CAMERA_UP_OFFSET));    
+  }    
+      //tps start end    
+      */  
+  function playerSphereCollision(sphere) {              
+    const center = vector1.addVectors(playerCollider.start, playerCollider.end).multiplyScalar(0.5);              
+    const sphere_center = sphere.collider.center;              
+    const r = playerCollider.radius + sphere.collider.radius;              
+    const r2 = r * r;              
+    for (const point of [playerCollider.start, playerCollider.end, center]) {              
+      const d2 = point.distanceToSquared(sphere_center);              
+      if (d2 < r2) {              
+        const normal = vector1.subVectors(point, sphere_center).normalize();              
+        const v1 = vector2.copy(normal).multiplyScalar(normal.dot(playerVelocity));              
+        const v2 = vector3.copy(normal).multiplyScalar(normal.dot(sphere.velocity));              
+        playerVelocity.add(v2).sub(v1);              
+        sphere.velocity.add(v1).sub(v2);              
+        const d = (r - Math.sqrt(d2)) / 2;              
+        sphere_center.addScaledVector(normal, -d);              
+      }              
+    }              
+  }            
+          
+  function spheresCollisions() {              
+    for (let i = 0, length = spheres.length; i < length; i++) {              
+      const s1 = spheres[i];              
+      for (let j = i + 1; j < length; j++) {              
+        const s2 = spheres[j];              
+        const d2 = s1.collider.center.distanceToSquared(s2.collider.center);              
+        const r = s1.collider.radius + s2.collider.radius;              
+        const r2 = r * r;              
+        if (d2 < r2) {              
+          const normal = vector1.subVectors(s1.collider.center, s2.collider.center).normalize();              
+          const v1 = vector2.copy(normal).multiplyScalar(normal.dot(s1.velocity));              
+          const v2 = vector3.copy(normal).multiplyScalar(normal.dot(s2.velocity));              
+          s1.velocity.add(v2).sub(v1);              
+          s2.velocity.add(v1).sub(v2);              
+          const d = (r - Math.sqrt(d2)) / 2;              
+          s1.collider.center.addScaledVector(normal, d);              
+          s2.collider.center.addScaledVector(normal, -d);              
+        }              
+      }              
+    }              
+  }            
+          
+  function updateSpheres(deltaTime) {              
+    spheres.forEach(sphere => {              
+      sphere.collider.center.addScaledVector(sphere.velocity, deltaTime);              
+      const result = worldOctree.sphereIntersect(sphere.collider);              
+      if (result) {              
+        sphere.velocity.addScaledVector(result.normal, - result.normal.dot(sphere.velocity) * 1.5);              
+        sphere.collider.center.add(result.normal.multiplyScalar(result.depth));              
+      } else {            
+        sphere.velocity.y -= GRAVITY * deltaTime;              
+      }              
+      const damping = Math.exp(-1.5 * deltaTime) - 1;              
+      sphere.velocity.addScaledVector(sphere.velocity, damping);              
+      playerSphereCollision(sphere);              
+    });              
+    spheresCollisions();              
+    for (const sphere of spheres) sphere.mesh.position.copy(sphere.collider.center);              
+  }            
+          
+  function getForwardVector() {              
+    camera.getWorldDirection(playerDirection);              
+    playerDirection.y = 0;              
+    playerDirection.normalize();              
+    return playerDirection;              
+  }            
+          
+  function getSideVector() {              
+    camera.getWorldDirection(playerDirection);              
+    playerDirection.y = 0;              
+    playerDirection.normalize();              
+    playerDirection.cross(camera.up);              
+    return playerDirection;              
+  }            
+          
+  function controls(deltaTime) {              
+    const speedDelta = deltaTime * (playerOnFloor ? 100 : 1);              
+    if (keyStates['KeyW']) playerVelocity.add(getForwardVector().multiplyScalar( speedDelta));              
+    if (keyStates['KeyS']) playerVelocity.add(getForwardVector().multiplyScalar(-speedDelta));              
+    if (keyStates['KeyA']) playerVelocity.add(getSideVector().multiplyScalar(-speedDelta));              
+    if (keyStates['KeyD']) playerVelocity.add(getSideVector().multiplyScalar( speedDelta));              
+    if (playerOnFloor && keyStates['Space']) playerVelocity.y = 15;              
+  }            
+          
+    // ---------- Load world ----------          
+          
+/*const gltfLoader = new GLTFLoader().setPath('./models/gltf/');          
+gltfLoader.load('lowPolyForestMap.glb', (gltf) => {          
+scene.add(gltf.scene);          
+worldOctree.fromGraphNode(gltf.scene);          
+          
+gltf.scene.traverse(child => {          
+if (child.isMesh) {          
+child.castShadow = true;          
+child.receiveShadow = true;          
+          
+// Make materials shiny + reflective            
+  child.material = new THREE.MeshStandardMaterial({            
+    map: child.material.map || null, // keep texture if exists            
+    color: child.material.color,     // preserve original color            
+    roughness: 0.015,                 // lower = shinier            
+    metalness: 0.6,                  // higher = more reflective            
+  });            
+          
+  if (child.material.map) child.material.map.anisotropy = 4;            
+}          
+          
+});          
+          
+const helper = new OctreeHelper(worldOctree);          
+helper.visible = false;          
+scene.add(helper);          
+});          
+*/          
+          
+// ---------- Load world ----------          
+          
+const gltfLoader = new GLTFLoader().setPath('./models/gltf/');          
+gltfLoader.load('backrooms.glb', (gltf) => {          
+// 🔽 shrink map by half (0.5 = 50%)          
+gltf.scene.scale.set(1, 1, 1);          
+          
+// (optional) reposition it so player spawns correctly          
+gltf.scene.position.set(0, 0, 0);          
+          
+scene.add(gltf.scene);          
+worldOctree.fromGraphNode(gltf.scene);          
+          
+gltf.scene.traverse(child => {          
+if (child.isMesh) {          
+child.castShadow = true;          
+child.receiveShadow = true;          
+          
+child.material = new THREE.MeshStandardMaterial({            
+    map: child.material.map || null,            
+    color: child.material.color,            
+   // roughness: 0.015,            
+  //  metalness: 0.6,            
+  });            
+          
+  if (child.material.map) child.material.map.anisotropy = 4;            
+}          
+          
+});          
+          
+const helper = new OctreeHelper(worldOctree);          
+helper.visible = false;          
+scene.add(helper);          
+});          
+          
+// ---------- Load Mixamo body (FBX) ----------            
+  // ---------- Load Mixamo body (FBX) ----------  
+const fbxLoader = new FBXLoader().setPath('./models/fbx/');  
+let playerModel = null;  
+let playerMixer = null;  
+let idleAction = null;  
+let walkAction = null;  
+let currentBodyAction = null;  
+  
+const BODY_Y_OFFSET = 1.51;  
+const MODEL_SCALE   = 0.01;  
+  
+fbxLoader.load('player.fbx', (fbx) => {  
+  playerModel = fbx;  
+  playerModel.scale.setScalar(MODEL_SCALE);  
+  playerModel.rotation.y = Math.PI;  
+  
+  playerModel.traverse((child) => {  
+    if (child.isMesh) {  
+      child.castShadow = true;  
+      child.receiveShadow = true;  
+      if (child.material) child.material.shadowSide = THREE.BackSide;  
+    }  
+  });  
+  
+  playerMixer = new THREE.AnimationMixer(playerModel);  
+  scene.add(playerModel);  
+  
+  // Load idle  
+  fbxLoader.setPath('./animations/player/').load('idle.fbx', (idleFbx) => {  
+    if (idleFbx.animations.length > 0) {  
+      const idleClip = idleFbx.animations[0];  
+      idleAction = playerMixer.clipAction(idleClip, playerModel);  
+      idleAction.play();  
+      currentBodyAction = idleAction;  
+    }  
+  });  
+  
+  
+fbxLoader.setPath('./animations/player/').load('walk.fbx', (walkFbx) => {  
+  if (walkFbx.animations.length > 0) {  
+    const walkClip = walkFbx.animations[0];  
+  
+    // 🔑 Strip root position tracks (kills baked root motion)  
+    console.log("Walk tracks:", walkClip.tracks.map(t => t.name));  
+    walkClip.tracks = walkClip.tracks.filter(track => {  
+      return !track.name.toLowerCase().includes('position');  
+    });  
+  
+    walkAction = playerMixer.clipAction(walkClip, playerModel);  
+  
+    // Adjust animation speed (tweak until it matches collider speed)  
+    walkAction.timeScale = 7.5;  
+  
+   // walkAction.play();  
+  }  
+});  
+});     
+                  
+                
+    // ---------- Load FPS Arms (Client-only) ----------          
+          
+let fpsArms = null;          
+let fpsArmsMixer = null;          
+let fpsArmsActions = {}; // Store animations by number          
+let currentArmsAction = null;          
+          
+const armsLoader = new GLTFLoader().setPath('./models/gltf/');          
+armsLoader.load('fps_arms.glb', (gltf) => {          
+  fpsArms = gltf.scene;          
+          
+  // Scale & position          
+  fpsArms.scale.set(0.11, 0.11, 0.11);          
+  fpsArms.position.set(0.1100, -0.105, -0.079);    //y bigger means lower      z smaller means closer
+  fpsArms.rotation.set(0, Math.PI-0.08, 0);          
+          
+  // Attach to camera          
+  camera.add(fpsArms);          
+  scene.add(camera);          
+          
+  // Create mixer          
+  fpsArmsMixer = new THREE.AnimationMixer(fpsArms);          
+          
+  // Store each animation clip in a dictionary          
+  gltf.animations.forEach((clip, idx) => {          
+    fpsArmsActions[idx + 1] = fpsArmsMixer.clipAction(clip); // animations named 1,2,3,4,5          
+  });          
+// For example, make idle 1.2x speed, walk 1.5x speed          
+fpsArmsActions[1].timeScale = 13; // idle          
+fpsArmsActions[2].timeScale = 6; // walk          
+  // Play idle animation (1) by default          
+  currentArmsAction = fpsArmsActions[1];          
+  currentArmsAction.play();          
+});          
+      
+      // ---------- OOB teleport ----------            
+  function teleportPlayerIfOob() {              
+    if (camera.position.y <= -25) {              
+      playerCollider.start.set(0, 0.5, 0);              
+      playerCollider.end.set(0, 1.65, 0);              
+      playerCollider.radius = 0.35;              
+      camera.position.copy(playerCollider.end);              
+      camera.rotation.set(0, 0, 0);              
+    }              
+  }            
+          
+  // ---------- Animate ----------            
+function animate() {  
+  const deltaTime = Math.min(0.05, clock.getDelta()) / STEPS_PER_FRAME;  
+  for (let i = 0; i < STEPS_PER_FRAME; i++) {  
+    controls(deltaTime);  
+    joystickControls(deltaTime);  
+    updatePlayer(deltaTime);  
+    updateSpheres(deltaTime);  
+    teleportPlayerIfOob();  
+  }  
+  
+  // Update animation mixers  
+  if (fpsArmsMixer) fpsArmsMixer.update(deltaTime);  
+  if (playerMixer) playerMixer.update(deltaTime);  
+  
+  // Check if moving  
+  const moving = keyStates['KeyW'] || keyStates['KeyA'] || keyStates['KeyS'] ||  
+                 keyStates['KeyD'] || joystickDX !== 0 || joystickDY !== 0;  
+  
+  // ---------- Switch FPS arms animations ----------  
+  const desiredArmsAction = moving ? fpsArmsActions[2] : fpsArmsActions[1];  
+  if (desiredArmsAction && desiredArmsAction !== currentArmsAction) {  
+    if (currentArmsAction) currentArmsAction.fadeOut(0.2);  
+    desiredArmsAction.reset().fadeIn(0.2).play();  
+    currentArmsAction = desiredArmsAction;  
+  }  
+  
+  // ---------- Switch body animations ----------  
+  if (playerMixer) {  
+    const desiredBodyAction = moving ? walkAction : idleAction;  
+    if (desiredBodyAction && desiredBodyAction !== currentBodyAction) {  
+      if (currentBodyAction) currentBodyAction.fadeOut(0.03);  
+      desiredBodyAction.reset().fadeIn(0.03).play();  
+      currentBodyAction = desiredBodyAction;  
+    }  
+  }  
+  
+  // Sync player model position/rotation  
+  if (playerModel) {  
+    playerModel.position.copy(playerCollider.end);  
+    playerModel.position.y -= BODY_Y_OFFSET;  
+    playerModel.rotation.y = camera.rotation.y + Math.PI;  
+  }  
+  
+  renderer.render(scene, camera);  
+  stats.update();  
+}  
+        
+</script>    </body>              
+</html>
